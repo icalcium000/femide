@@ -44,7 +44,7 @@ load_dotenv()
 # Берем токен из переменных окружения сервера (Environment Variables)
 TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
 
-# Переносим ID в переменные окружения. Если они не заданы, используются значения по умолчанию.
+# Переносим ID в переменные окружения.
 SUPER_ADMIN_ID = int(os.getenv("SUPER_ADMIN_ID") or 1197260250)
 ALLOWED_GROUP_ID = int(os.getenv("ALLOWED_GROUP_ID") or -1000000000000)
 
@@ -53,7 +53,6 @@ CMD_PREFIXES = ("/", "!")
 # Строгая проверка токена перед инициализацией
 if not TOKEN:
     logging.critical("❌ КРИТИЧЕСКАЯ ОШИБКА: Токен бота не обнаружен!")
-    logging.critical("Убедитесь, что на сайте хостинга в разделе 'Environment Variables' создана переменная BOT_TOKEN.")
     sys.exit(1)
 
 # Флаги для склейки сообщений в ЛС от супер-админа
@@ -172,6 +171,24 @@ async def on_shutdown(bot: Bot):
     db_conn.commit()
     db_conn.close()
     await bot.session.close()
+
+# --- ФОНОВАЯ ЗАДАЧА: ПРОВЕРКА СТАТУСА (РАЗ В ЧАС) ---
+async def status_report_task(bot: Bot):
+    """Каждый час отправляет 'Работаю' супер-админу в личку."""
+    while True:
+        try:
+            # Ждем 1 час
+            await asyncio.sleep(3600)
+            
+            # Отправляем весточку Создателю
+            await bot.send_message(
+                SUPER_ADMIN_ID, 
+                f"<b>Отчет системы:</b> Работаю в штатном режиме, Создатель! {e('kiss', '💋')}"
+            )
+            logging.info("Ежечасный отчет отправлен супер-админу.")
+        except Exception as err:
+            logging.error(f"Ошибка в фоновой задаче статуса: {err}")
+            await asyncio.sleep(60) # При ошибке ждем минуту и пробуем снова
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async def is_admin(message: Message, bot: Bot):
@@ -332,7 +349,7 @@ async def cmd_help(message: Message):
         f"<b>Твой профиль:</b> <code>!профиль</code>, <code>!ник</code> [текст], <code>!описание</code> [текст], <code>!рест</code> [причина], <code>!анрест</code>, <code>!люблю</code> [текст], <code>!нелюблю</code> [текст], <code>!добавить_перса</code> [имя] | [ссылка], <code>!удалить_перса</code> [имя/все]\n"
         f"<b>Твоя внешность:</b> <code>!уст_фото</code>, <code>!удалить_фото</code>\n"
         f"<b>Кошелек:</b> <code>!магазин</code>, <code>!купить</code> [id]\n"
-        f"<b>Дела сердечные:</b> <code>!брак</code>, <code>!развод</code>, <code>!список_браков</code>, <code>!шип</code>, <code>!враги</code>\n"
+        f"<b>Дела сердечные:</b> <code>!брак</code>, <code>!развод</code>, <code>!шип</code>, <code>!враги</code>\n"
         f"<b>Прикосновения:</b> Любая РП команда через ! (например <code>!обнять</code>, <code>!поцеловать</code>)\n"
         f"<b>Игры:</b> <code>!крутка</code> [от] [до], <code>!крутить</code> (рулетка имен), <code>!список_имен</code>\n"
         f"<b>Важное:</b> <code>!правила</code>, <code>!ссылки</code>, <code>!местность</code>\n"
@@ -1172,6 +1189,10 @@ async def main():
     dp.shutdown.register(on_shutdown)
     await bot.delete_webhook(drop_pending_updates=True)
     dp.message.middleware(AntiSpamMiddleware())
+    
+    # --- ЗАПУСК ФОНОВОЙ ЗАДАЧИ ОТЧЕТА ---
+    asyncio.create_task(status_report_task(bot))
+    
     print(f"💋 Фемида проснулась и полностью готова! Админ: {SUPER_ADMIN_ID}, Группа: {ALLOWED_GROUP_ID}")
     await dp.start_polling(bot)
 
