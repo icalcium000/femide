@@ -20,23 +20,21 @@ BOT_NAME = "Алгоритм порядка и правосудия — ФЕМИ
 CURRENCY = "EL'coins"
 
 # Берем токен из переменных окружения сервера (Environment Variables)
-# На сайте хостинга создайте переменную BOT_TOKEN
-TOKEN = os.getenv("BOT_TOKEN")
+TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
 
-SUPER_ADMIN_ID = 1197260250   # Ваш Telegram ID
+# Переносим ID в переменные окружения. Если они не заданы, используются значения по умолчанию.
+SUPER_ADMIN_ID = int(os.getenv("SUPER_ADMIN_ID") or 1197260250)
+ALLOWED_GROUP_ID = int(os.getenv("ALLOWED_GROUP_ID") or -1000000000000)
+
 DB_NAME = 'Femide.db'
-
-# Впишите сюда ID вашей основной группы (начинается с -100)
-ALLOWED_GROUP_ID = -1000000000000 
-
 CMD_PREFIXES = ("/", "!")
 
-# Проверка наличия токена в окружении
+# Строгая проверка токена перед инициализацией
 if not TOKEN:
-    logging.error("Токен бота не найден! Убедитесь, что вы добавили переменную окружения BOT_TOKEN в настройках хостинга.")
-    # Мы не завершаем работу через exit(1) сразу, чтобы не зацикливать перезагрузку контейнера,
-    # но бот не сможет инициализироваться.
-    TOKEN = "MISSING_TOKEN"
+    logging.critical("❌ КРИТИЧЕСКАЯ ОШИБКА: Токен бота не обнаружен!")
+    logging.critical("Убедитесь, что на сайте хостинга в разделе 'Environment Variables' создана переменная BOT_TOKEN.")
+    import sys
+    sys.exit(1)
 
 # Флаги для склейки сообщений в ЛС от супер-админа
 admin_combine_state = False
@@ -360,7 +358,7 @@ async def main():
     # Удаляем вебхук при запуске на случай смены режима
     await bot.delete_webhook(drop_pending_updates=True)
     dp.message.middleware(AntiSpamMiddleware())
-    print("💋 Фемида проснулась! Токен успешно получен из окружения.")
+    print(f"💋 Фемида проснулась! Админ: {SUPER_ADMIN_ID}, Группа: {ALLOWED_GROUP_ID}")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
