@@ -4,14 +4,16 @@ import subprocess
 # --- АВТОМАТИЧЕСКАЯ УСТАНОВКА БИБЛИОТЕК ---
 try:
     import aiogram
+    from dotenv import load_dotenv
 except ImportError:
     print("Ой, кажется у тебя не хватает aiogram! Сейчас всё скачаю, подожди секундочку 💋...")
     try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "aiogram"])
+        subprocess.check_call([sys.executable, "-m", "pip", "install", "aiogram", "python-dotenv"])
         print("Всё скачалось! Теперь я готова к работе 💖")
         import aiogram
+        from dotenv import load_dotenv
     except Exception as e:
-        print(f"Блин, не получилось скачать автоматически 💔. Пожалуйста, напиши в терминале: pip install aiogram\nОшибка: {e}")
+        print(f"Блин, не получилось скачать автоматически 💔. Пожалуйста, напиши в терминале: pip install aiogram python-dotenv\nОшибка: {e}")
         sys.exit(1)
 
 import asyncio
@@ -35,6 +37,9 @@ from aiogram import BaseMiddleware
 # --- КОНФИГУРАЦИЯ ---
 BOT_NAME = "Алгоритм порядка и правосудия — ФЕМИДА"
 CURRENCY = "EL'coins"
+
+# Загружаем переменные из локального файла .env (если он существует)
+load_dotenv()
 
 # Берем токен из переменных окружения сервера (Environment Variables)
 TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
