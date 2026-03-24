@@ -18,11 +18,25 @@ from aiogram import BaseMiddleware
 # --- КОНФИГУРАЦИЯ ---
 BOT_NAME = "Алгоритм порядка и правосудия — ФЕМИДА"
 CURRENCY = "EL'coins"
-TOKEN = ""  # ВСТАВЬТЕ ВАШ ТОКЕН СЮДА
+
+# Берем токен из переменных окружения сервера (Environment Variables)
+# На сайте хостинга создайте переменную BOT_TOKEN
+TOKEN = os.getenv("BOT_TOKEN")
+
 SUPER_ADMIN_ID = 1197260250   # Ваш Telegram ID
 DB_NAME = 'Femide.db'
 
+# Впишите сюда ID вашей основной группы (начинается с -100)
+ALLOWED_GROUP_ID = -1000000000000 
+
 CMD_PREFIXES = ("/", "!")
+
+# Проверка наличия токена в окружении
+if not TOKEN:
+    logging.error("Токен бота не найден! Убедитесь, что вы добавили переменную окружения BOT_TOKEN в настройках хостинга.")
+    # Мы не завершаем работу через exit(1) сразу, чтобы не зацикливать перезагрузку контейнера,
+    # но бот не сможет инициализироваться.
+    TOKEN = "MISSING_TOKEN"
 
 # Флаги для склейки сообщений в ЛС от супер-админа
 admin_combine_state = False
@@ -117,10 +131,11 @@ def init_db():
 
 db_conn = init_db()
 
-# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
-bot = Bot(token=TOKEN if TOKEN else "PASTE_YOUR_TOKEN_HERE", default=DefaultBotProperties(parse_mode="HTML"))
+# --- ИНИЦИАЛИЗАЦИЯ БОТА ---
+bot = Bot(token=TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
 dp = Dispatcher()
 
+# --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async def is_admin(message: Message, bot: Bot):
     if message.from_user.id == SUPER_ADMIN_ID: return True
     if message.chat.type == "private": return True
@@ -169,7 +184,7 @@ def check_time_resets(cursor):
         cursor.execute('UPDATE users SET messages_week = 0')
         cursor.execute('UPDATE settings SET value = ? WHERE key = "reset_week"', (str(now),))
 
-# --- АНТИСПАМ СИСТЕМА И ФИЛЬТР ГРУПП ---
+# --- АНТИСПАМ СИСТЕМА ---
 class AntiSpamMiddleware(BaseMiddleware):
     def __init__(self, limit: int = 5, time_window: int = 7, mute_minutes: int = 30):
         self.limit = limit
@@ -179,12 +194,9 @@ class AntiSpamMiddleware(BaseMiddleware):
 
     async def __call__(self, handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]], event: Message, data: Dict[str, Any]) -> Any:
         if not isinstance(event, Message): return await handler(event, data)
-        
         if event.chat.type in ("group", "supergroup") and event.chat.id != ALLOWED_GROUP_ID:
             return 
-            
         user_id = event.from_user.id
-        
         if user_id == SUPER_ADMIN_ID or event.chat.type == "private":
             return await handler(event, data)
 
@@ -196,51 +208,27 @@ class AntiSpamMiddleware(BaseMiddleware):
         if len(self.spam_cache[user_id]) > self.limit:
             if len(self.spam_cache[user_id]) == self.limit + 1:
                 cursor = db_conn.cursor()
-                cursor.execute('''INSERT OR IGNORE INTO users (user_id, username, joined_date) 
-                                  VALUES (?, ?, ?)''', 
-                               (user_id, event.from_user.full_name, datetime.now().strftime('%Y-%m-%d')))
-                
+                cursor.execute('INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)', (user_id, event.from_user.full_name, datetime.now().strftime('%Y-%m-%d')))
                 cursor.execute('UPDATE users SET warns = warns + 1 WHERE user_id = ?', (user_id,))
                 cursor.execute('SELECT warns FROM users WHERE user_id = ?', (user_id,))
-                warns_res = cursor.fetchone()
-                warns_count = warns_res[0] if warns_res else 1
+                warns_count = cursor.fetchone()[0]
                 db_conn.commit()
 
                 if warns_count >= 3:
-                    try:
-                        await event.bot.ban_chat_member(event.chat.id, user_id)
-                        await event.answer(f"Оу... кажется, {get_user_link(user_id, event.from_user.first_name)} совсем не умеет держать себя в руках. Три предупреждения — и мы прощаемся. {e('dislike', '💔')}")
-                    except Exception as err: 
-                        logging.error(f"Не удалось забанить: {err}")
-                        await event.answer(f"Я бы с удовольствием выгнала этого хулигана, но вы не дали мне прав администратора! Сделайте меня главной, ну пожалуйста 🥺")
+                    try: await event.bot.ban_chat_member(event.chat.id, user_id)
+                    except: pass
                 else:
-                    try:
-                        mute_duration = timedelta(minutes=self.mute_minutes)
-                        await event.bot.restrict_chat_member(
-                            chat_id=event.chat.id, 
-                            user_id=user_id, 
-                            permissions=ChatPermissions(can_send_messages=False), 
-                            until_date=mute_duration
-                        )
-                        await event.answer(f"Тшшш, {get_user_link(user_id, event.from_user.first_name)}... слишком много шума, золотце. Посиди в тишине {self.mute_minutes} минут и подумай о своем поведении {e('kiss', '💋')}\n(Варн {warns_count}/3)")
-                    except Exception as err:
-                        logging.error(f"Не удалось замутить: {err}")
-                        await event.answer(f"Эй, {get_user_link(user_id, event.from_user.first_name)}, перестань так быстро писать! {e('kiss', '💋')}\n<i>(Я попыталась закрыть ему ротик, но мне не хватает прав админа!)</i>")
+                    try: await event.bot.restrict_chat_member(event.chat.id, user_id, ChatPermissions(can_send_messages=False), until_date=timedelta(minutes=self.mute_minutes))
+                    except: pass
             return 
         return await handler(event, data)
 
-# --- ПРИВЕТСТВИЯ И ПРОЩАНИЯ ---
+# --- ПРИВЕТСТВИЯ / ПРОЩАНИЯ ---
 @dp.message(F.new_chat_members)
 async def welcome_member(message: Message):
     for member in message.new_chat_members:
         if member.id == bot.id: continue
-        phrases = [
-            f"Ого, кто к нам зашел! {get_user_link(member.id, member.first_name)}, надеюсь, ты тут надолго? {e('kiss', '💋')}",
-            f"В наших рядах пополнение! {get_user_link(member.id, member.first_name)}, располагайся, милый(ая), тут у нас очень горячо {e('heart', '💖')}",
-            f"Привет-привет, {get_user_link(member.id, member.first_name)}! У тебя отличный вкус, раз ты решил(а) присоединиться к нам. 😘",
-            f"Внимание! {get_user_link(member.id, member.first_name)} вошёл в чат. Кажется, кто-то собирается украсть все наши сердечки... {e('heart', '💖')}",
-        ]
-        await message.answer(random.choice(phrases))
+        await message.answer(f"Ого, кто к нам зашел! {get_user_link(member.id, member.first_name)}, надеюсь, ты тут надолго? {e('kiss', '💋')}")
 
 @dp.message(F.left_chat_member)
 async def goodbye_member(message: Message):
@@ -249,48 +237,9 @@ async def goodbye_member(message: Message):
     cursor.execute('SELECT spouse_id FROM users WHERE user_id = ?', (member.id,))
     res = cursor.fetchone()
     if res and res[0]:
-        spouse_id = res[0]
-        cursor.execute('UPDATE users SET spouse_id = NULL WHERE user_id = ? OR user_id = ?', (member.id, spouse_id))
+        cursor.execute('UPDATE users SET spouse_id = NULL WHERE user_id = ? OR user_id = ?', (member.id, res[0]))
         db_conn.commit()
-
-    phrases = [
-        f"Ну вот... {member.first_name} ушел(ла), а я только начала строить на нас планы {e('dislike', '💔')}",
-        f"Без {member.first_name} чат стал чуточку холоднее... Возвращайся скорее! 🥺",
-        f"Соединение с {member.first_name} разорвано. Мое механическое сердце разбито... {e('dislike', '💔')}",
-    ]
-    await message.answer(random.choice(phrases))
-
-# --- СИСТЕМНЫЕ ИНФО-КОМАНДЫ ---
-@dp.message(Command("help", "помощь", prefix=CMD_PREFIXES))
-async def cmd_help(message: Message):
-    text = (
-        f"Смотри, что я умею делать ради тебя, милашка:\n\n"
-        f"<b>Твой профиль:</b> <code>!профиль</code>, <code>!ник</code> [текст], <code>!описание</code> [текст], <code>!рест</code> [причина], <code>!анрест</code>, <code>!люблю</code> [текст], <code>!нелюблю</code> [текст], <code>!добавить_перса</code> [имя] | [ссылка], <code>!удалить_перса</code> [имя/все]\n"
-        f"<b>Твоя внешность:</b> <code>!уст_фото</code>, <code>!удалить_фото</code>\n"
-        f"<b>Кошелек:</b> <code>!магазин</code>, <code>!купить</code> [id]\n"
-        f"<b>Дела сердечные:</b> <code>!брак</code>, <code>!развод</code>, <code>!список_браков</code>, <code>!шип</code>, <code>!враги</code>\n"
-        f"<b>Игры:</b> <code>!крутка</code> [от] [до], <code>!крутить</code> (рулетка имен), <code>!список_имен</code>\n"
-        f"<b>Инструменты БД:</b> <code>!скачать_бд</code>, <code>!загрузить_бд</code>\n"
-        f"<b>Топы:</b> <code>!топ</code>, <code>!топнеделя</code>, <code>!топдень</code>, <code>!топчас</code>\n"
-    )
-    await message.answer(text)
-
-# --- НАСТРОЙКИ АДМИНА ---
-async def set_setting(message: Message, key: str, bot: Bot):
-    if not await is_admin(message, bot): return
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return await message.answer(f"А текст-то где, милый? {e('kiss', '💋')}")
-    cursor = db_conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, args[1]))
-    db_conn.commit()
-    await message.answer(f"Всё запомнила в лучшем виде, золотце! {e('kiss', '💋')}")
-
-@dp.message(Command("setloc", "уст_местность", prefix=CMD_PREFIXES))
-async def set_loc(message: Message, bot: Bot): await set_setting(message, "location", bot)
-@dp.message(Command("setrules", "уст_правила", prefix=CMD_PREFIXES))
-async def set_rules(message: Message, bot: Bot): await set_setting(message, "rules", bot)
-@dp.message(Command("setlinks", "уст_ссылки", prefix=CMD_PREFIXES))
-async def set_links(message: Message, bot: Bot): await set_setting(message, "links", bot)
+    await message.answer(f"Ну вот... {member.first_name} ушел(ла), а я только начала строить на нас планы {e('dislike', '💔')}")
 
 # --- СКЛЕЙКА СООБЩЕНИЙ В ЛС ---
 @dp.message(Command("combine_start", "объед_нач", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
@@ -325,15 +274,10 @@ async def handle_private_messages(message: Message):
 async def show_profile(message: Message, bot: Bot):
     target_user = message.reply_to_message.from_user if message.reply_to_message else message.from_user
     if not target_user or target_user.is_bot: return 
-            
     cursor = db_conn.cursor()
-    cursor.execute('''INSERT OR IGNORE INTO users (user_id, username, joined_date) 
-                      VALUES (?, ?, ?)''', (target_user.id, target_user.full_name, datetime.now().strftime('%Y-%m-%d')))
+    cursor.execute('INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)', (target_user.id, target_user.full_name, datetime.now().strftime('%Y-%m-%d')))
     db_conn.commit()
-    
-    cursor.execute('''SELECT custom_nick, messages_total, joined_date, warns, balance, 
-                      characters, rewards, description, likes, dislikes, spouse_id, clan_id, custom_photo, rest_status 
-                      FROM users WHERE user_id = ?''', (target_user.id,))
+    cursor.execute('SELECT custom_nick, messages_total, joined_date, warns, balance, characters, rewards, description, likes, dislikes, spouse_id, custom_photo, rest_status FROM users WHERE user_id = ?', (target_user.id,))
     data = cursor.fetchone()
     
     nick = html.escape(data[0] if data[0] else target_user.first_name)
@@ -345,30 +289,50 @@ async def show_profile(message: Message, bot: Bot):
         spouse_text = f"{e('like', '❤️')} Сердце отдано {get_user_link(data[10], sp_nick)}"
 
     profile_text = (
-        f"<b>Досье на:</b> {get_user_link(target_user.id, nick)}\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"<b>Статус:</b> {get_rank(data[1])}\n"
-        f"<b>Сообщений:</b> {data[1]}\n"
-        f"<b>В базе с:</b> {data[2]}\n"
-        f"<b>Косяки:</b> {data[3]}/3\n"
-        f"<b>Баланс:</b> {data[4]} {CURRENCY}\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"<b>О себе:</b> {html.escape(data[7]) if data[7] else 'Не указано'}\n"
-        f"<b>Рест:</b> {html.escape(data[13]) if data[13] else 'Активен'}\n"
+        f"<b>Досье на:</b> {get_user_link(target_user.id, nick)}\n━━━━━━━━━━━━━━\n"
+        f"<b>Статус:</b> {get_rank(data[1])}\n<b>Сообщений:</b> {data[1]}\n<b>В базе с:</b> {data[2]}\n"
+        f"<b>Косяки:</b> {data[3]}/3\n<b>Баланс:</b> {data[4]} {CURRENCY}\n━━━━━━━━━━━━━━\n"
+        f"<b>О себе:</b> {html.escape(data[7]) if data[7] else 'Не указано'}\n<b>Рест:</b> {html.escape(data[12]) if data[12] else 'Активен'}\n"
         f"{e('like', '❤️')} <b>Любит:</b> {html.escape(data[8]) if data[8] else 'Не указано'}\n"
-        f"{e('dislike', '💔')} <b>Не любит:</b> {html.escape(data[9]) if data[9] else 'Не указано'}\n"
-        f"━━━━━━━━━━━━━━\n"
-        f"{spouse_text}\n"
+        f"{e('dislike', '💔')} <b>Не любит:</b> {html.escape(data[9]) if data[9] else 'Не указано'}\n━━━━━━━━━━━━━━\n{spouse_text}\n"
     )
     if data[5]: profile_text += f"<b>Персонажи:</b> {data[5]}\n"
     if data[6]: profile_text += f"<b>Награды:</b> {data[6]}\n"
-
     try:
-        if data[12]: await message.answer_photo(photo=data[12], caption=profile_text)
+        if data[11]: await message.answer_photo(photo=data[11], caption=profile_text)
         else: await message.answer(profile_text)
     except: await message.answer(profile_text)
 
-# --- МОДЕРАЦИЯ И БАЗА ---
+# --- ИНСТРУМЕНТЫ ВЛАДЕЛЬЦА: РАССЫЛКА ПО СПИСКУ ID ---
+@dp.message(Command("list_broadcast", "рассылка_список", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
+async def cmd_list_broadcast(message: Message, bot: Bot):
+    if message.chat.type != "private": return await message.answer("Только в ЛС! 💋")
+    args = message.text.split()[1:]
+    if not args: return await message.answer("Нужен список ID через пробел! 💋")
+    
+    await message.answer(f"Начинаю рассылку поздравлений ({len(args)} сообщений)... ✨")
+    count = 0
+    for uid_str in args:
+        try:
+            uid = int(uid_str.strip())
+            n = random.randint(1, 1000)
+            text = (
+                f"- Примите наши поздравления! Вы были включены в первый поток приема, и, "
+                f"как и многие другие участники, стали лучшими из лучших! Ваша способность "
+                f"имеет номер <b>{n}</b>, и мы с радостью поделимся с вами всей необходимой "
+                f"информацией о ней. Не забудьте с ней ознакомиться. Спасибо, что вы с нами! 💋"
+            )
+            await bot.send_message(uid, text)
+            count += 1
+            await asyncio.sleep(0.1) 
+        except: continue
+    await message.answer(f"Готово! Доставлено {count} сообщений. 💋")
+
+# --- БАЗА И ИНФО ---
+@dp.message(Command("help", "помощь", prefix=CMD_PREFIXES))
+async def cmd_help(message: Message):
+    await message.answer(f"<b>{BOT_NAME}</b>\nОсновные команды: <code>!профиль</code>, <code>!рест</code>, <code>!магазин</code>, <code>!брак</code>.\nПолный список команд доступен у администрации. 💋")
+
 @dp.message(Command("db_query", "запрос", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
 async def cmd_db(message: Message):
     if message.chat.type != "private": return
@@ -376,93 +340,13 @@ async def cmd_db(message: Message):
         q = message.text.split(maxsplit=1)[1]
         cursor = db_conn.cursor()
         cursor.execute(q)
-        if q.lower().startswith("select"): await message.answer(f"Нашла:\n{hcode(str(cursor.fetchall()[:10]))}")
+        if q.lower().startswith("select"): await message.answer(f"Результат:\n{hcode(str(cursor.fetchall()[:5]))}")
         else:
             db_conn.commit()
-            await message.answer(f"Исполнено! Изменено: {cursor.rowcount} {e('kiss', '💋')}")
+            await message.answer(f"Успешно! Изменено строк: {cursor.rowcount} 💋")
     except Exception as err: await message.answer(f"Ошибка: {err}")
 
-@dp.message(Command("db_download", "скачать_бд", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
-async def cmd_db_download(message: Message):
-    if message.chat.type != "private": return
-    if os.path.exists(DB_NAME): await message.answer_document(FSInputFile(DB_NAME), caption=f"Твоя база, госпожа! 💋")
-
-@dp.message(Command("db_upload", "загрузить_бд", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
-async def cmd_db_upload(message: Message, bot: Bot):
-    if message.chat.type != "private" or not message.reply_to_message or not message.reply_to_message.document: return
-    try:
-        await bot.download_file((await bot.get_file(message.reply_to_message.document.file_id)).file_path, destination=DB_NAME)
-        await message.answer("База обновлена! 💖")
-    except Exception as err: await message.answer(f"Ошибка: {err}")
-
-# --- ИНСТРУМЕНТЫ ВЛАДЕЛЬЦА: РАССЫЛКА ПО СПИСКУ ID ---
-@dp.message(Command("list_broadcast", "рассылка_список", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
-async def cmd_list_broadcast(message: Message, bot: Bot):
-    if message.chat.type != "private":
-        return await message.answer("Эту команду можно шептать мне только в личные сообщения! 💋")
-
-    args = message.text.split()[1:]
-    
-    if not args:
-        return await message.answer(f"Сладкий, мне нужен список ID через пробел!\nПример: <code>!рассылка_список 12345 12345 67890</code>\n(Если один ID указан дважды, человеку придет два сообщения) 😘")
-
-    await message.answer(f"Начинаю рассылку поздравлений по твоему списку ({len(args)} сообщений)... ✨")
-    
-    count = 0
-    for uid_str in args:
-        try:
-            uid = int(uid_str.strip())
-            n = random.randint(1, 1000)
-            
-            text = (
-                f"- Примите наши поздравления! Вы были включены в первый поток приема, и, "
-                f"как и многие другие участники, стали лучшими из лучших! Ваша способность "
-                f"имеет номер <b>{n}</b>, и мы с радостью поделимся с вами всей необходимой "
-                f"информацией о ней. Не забудьте с ней ознакомиться. Спасибо, что вы с нами! 💋"
-            )
-            
-            await bot.send_message(uid, text)
-            count += 1
-            await asyncio.sleep(0.1) 
-        except ValueError:
-            logging.error(f"Неверный формат ID: {uid_str}")
-            continue
-        except Exception as e:
-            logging.error(f"Ошибка отправки для {uid_str}: {e}")
-            continue
-
-    await message.answer(f"Готово, радость моя! Успешно доставлено {count} сообщений. 💋")
-
-@dp.message(Command("helpmelak", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
-async def cmd_helpmelak(message: Message):
-    text = (
-        f"Секретное меню для моего Создателя 🤫\n\n"
-        f"<code>!запрос [SQL]</code> — работа с базой.\n"
-        f"<code>!скачать_бд</code> / <code>!загрузить_бд</code> — экспорт/импорт файла.\n"
-        f"<code>!рассылка_список [ID ID ID]</code> — рассылка по твоему списку (можно дублировать ID). 💋\n\n"
-        f"<i>Рассылки в группу:</i>\n"
-        f"<code>!уст_основной_чат</code> (в группе).\n"
-        f"<code>!утро</code> / <code>!ночь</code> / <code>!сказать [текст]</code> (в ЛС).\n"
-    )
-    await message.answer(text)
-
-# --- РЕСТ СТАТУС ---
-@dp.message(Command("setrest", "рест", prefix=CMD_PREFIXES))
-async def cmd_setrest(message: Message):
-    args = message.text.split(maxsplit=1)
-    reason = args[1] if len(args) > 1 else "Отдыхает"
-    cursor = db_conn.cursor()
-    cursor.execute('UPDATE users SET rest_status = ? WHERE user_id = ?', (reason, message.from_user.id))
-    db_conn.commit()
-    await message.answer(f"Записала тебя в рест. Отдыхай, золотце! {e('kiss', '💋')}")
-
-@dp.message(Command("unrest", "анрест", prefix=CMD_PREFIXES))
-async def cmd_unrest(message: Message):
-    db_conn.execute('UPDATE users SET rest_status = NULL WHERE user_id = ?', (message.from_user.id,))
-    db_conn.commit()
-    await message.answer(f"С возвращением! Я скучала {e('heart', '💖')}")
-
-# --- УМНЫЙ ОБРАБОТЧИК ---
+# --- ОБРАБОТЧИК СООБЩЕНИЙ ---
 @dp.message(F.chat.type.in_({"group", "supergroup"}))
 async def handle_everything(message: Message, bot: Bot):
     if not message.text or message.chat.id != ALLOWED_GROUP_ID: return
@@ -473,9 +357,10 @@ async def handle_everything(message: Message, bot: Bot):
     db_conn.commit()
 
 async def main():
+    # Удаляем вебхук при запуске на случай смены режима
     await bot.delete_webhook(drop_pending_updates=True)
     dp.message.middleware(AntiSpamMiddleware())
-    print("Бот алгоритма Фемида запущен (SQLite) 💋")
+    print("💋 Фемида проснулась! Токен успешно получен из окружения.")
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
