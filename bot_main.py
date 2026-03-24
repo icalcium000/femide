@@ -6,7 +6,7 @@ try:
     import aiogram
     from dotenv import load_dotenv
 except ImportError:
-    print("Ой, кажется у тебя не хватает aiogram! Сейчас всё скачаю, подожди секундочку 💋...")
+    print("Ой, кажется у тебя не хватает библиотек! Сейчас всё скачаю, подожди секундочку 💋...")
     try:
         subprocess.check_call([sys.executable, "-m", "pip", "install", "aiogram", "python-dotenv"])
         print("Всё скачалось! Теперь я готова к работе 💖")
@@ -152,7 +152,10 @@ def init_db():
     cursor.execute('SELECT COUNT(*) FROM shop')
     if cursor.fetchone()[0] == 0:
         cursor.executemany('INSERT INTO shop (name, price) VALUES (?, ?)', [
-            ('Новая местность —', 25), ('Новая способность —', 35), ('Выбор способности своему персонажу (единоразово) —', 75), ('Любой предмет для своего персонажу (единоразово) —', 25)
+            ('Новая местность —', 25), 
+            ('Новая способность —', 35), 
+            ('Выбор способности своему персонажу (единоразово) —', 75), 
+            ('Любой предмет для своего персонажу (единоразово) —', 25)
         ])
     conn.commit()
     return conn
@@ -219,7 +222,7 @@ def check_time_resets(cursor):
         cursor.execute('UPDATE users SET messages_week = 0')
         cursor.execute('UPDATE settings SET value = ? WHERE key = "reset_week"', (str(now),))
 
-# --- АНТИСПАМ СИСТЕМА И ФИЛЬТР ГРУПП ---
+# --- АНТИСПАМ СИСТЕМА ---
 class AntiSpamMiddleware(BaseMiddleware):
     def __init__(self, limit: int = 5, time_window: int = 7, mute_minutes: int = 30):
         self.limit = limit
@@ -230,9 +233,8 @@ class AntiSpamMiddleware(BaseMiddleware):
     async def __call__(self, handler: Callable[[Message, Dict[str, Any]], Awaitable[Any]], event: Message, data: Dict[str, Any]) -> Any:
         if not isinstance(event, Message): return await handler(event, data)
         
-        # --- ПРОВЕРКА НА РАЗРЕШЕННУЮ ГРУППУ ---
         if event.chat.type in ("group", "supergroup") and event.chat.id != ALLOWED_GROUP_ID:
-            return # Игнорируем сообщения из других групп
+            return 
             
         user_id = event.from_user.id
         
@@ -318,6 +320,11 @@ async def goodbye_member(message: Message):
     await message.answer(random.choice(phrases))
 
 # --- СИСТЕМНЫЕ ИНФО-КОМАНДЫ ---
+@dp.message(Command("start", prefix=CMD_PREFIXES))
+async def cmd_start(message: Message):
+    if message.chat.type == "private":
+        await message.answer(f"Привет, золотце! Я — {BOT_NAME}. 💋\nНапиши <code>!помощь</code>, чтобы узнать, что я умею. В личных сообщениях я теперь тоже принимаю обычные команды!")
+
 @dp.message(Command("help", "помощь", prefix=CMD_PREFIXES))
 async def cmd_help(message: Message):
     text = (
@@ -538,17 +545,6 @@ async def cmd_combine_end(message: Message):
         
     admin_combine_messages = []
 
-@dp.message(F.chat.type == "private", F.from_user.id == SUPER_ADMIN_ID)
-async def handle_private_messages(message: Message):
-    global admin_combine_state, admin_combine_messages
-    if admin_combine_state:
-        text_to_add = message.html_text
-        if text_to_add:
-            raw_text = message.text or message.caption or ""
-            if any(raw_text.startswith(p) for p in CMD_PREFIXES):
-                return
-            admin_combine_messages.append(text_to_add)
-
 # --- ПРОФИЛЬ И КАСТОМИЗАЦИЯ ---
 @dp.message(Command("profile", "профиль", prefix=CMD_PREFIXES))
 async def show_profile(message: Message, bot: Bot):
@@ -559,7 +555,8 @@ async def show_profile(message: Message, bot: Bot):
         return await message.answer("Я всего лишь системный алгоритм, глупышка, у меня не может быть профиля! Но мне приятно твое внимание 😘")
     
     if message.reply_to_message and target_user.id != message.from_user.id:
-        if not await is_user_in_chat(message.chat.id, target_user.id, bot):
+        check_chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else ALLOWED_GROUP_ID
+        if not await is_user_in_chat(check_chat_id, target_user.id, bot):
             return await message.answer(f"Этого человека сейчас нет с нами в чате, попробуй позже( {e('dislike', '💔')}")
             
     cursor = db_conn.cursor()
@@ -706,7 +703,6 @@ async def add_char(message: Message, bot: Bot):
     if len(args) < 2: return await message.answer("Ой, что-то не так... Напиши вот так: !добавить_перса Имя | Ссылка 😘")
     
     raw_input = args[1]
-    
     if '|' in raw_input:
         name_part, link_part = raw_input.split('|', maxsplit=1)
         name = html.escape(name_part.strip())
@@ -734,8 +730,7 @@ async def del_char(message: Message, bot: Bot):
     if not message.reply_to_message: return await message.answer("Малыш, ответь этой командой на сообщение пользователя, чтобы я поняла, кого мы чистим. 😘")
     
     args = message.text.split(maxsplit=1)
-    if len(args) < 2: 
-        return await message.answer("Укажи имя персонажа для удаления или напиши 'все', чтобы очистить список полностью.")
+    if len(args) < 2: return await message.answer("Укажи имя персонажа для удаления или напиши 'все'.")
     
     char_to_remove = args[1].strip()
     target_user = message.reply_to_message.from_user
@@ -746,8 +741,7 @@ async def del_char(message: Message, bot: Bot):
     res = cursor.fetchone()
     current_chars = res[0] if res and res[0] else ""
     
-    if not current_chars:
-        return await message.answer("Да у него и так список пуст, милый! Нечего удалять.")
+    if not current_chars: return await message.answer("Да у него и так список пуст, милый! Нечего удалять.")
         
     if char_to_remove.lower() in ["все", "all"]:
         cursor.execute("UPDATE users SET characters = '' WHERE user_id = ?", (target_user.id,))
@@ -757,35 +751,25 @@ async def del_char(message: Message, bot: Bot):
     chars_list = [c.strip() for c in current_chars.split(',') if c.strip()]
     new_chars_list = [c for c in chars_list if char_to_remove.lower() not in c.lower()]
     
-    if len(chars_list) == len(new_chars_list):
-        return await message.answer("Я не нашла такого персонажа в списке...")
+    if len(chars_list) == len(new_chars_list): return await message.answer("Я не нашла такого персонажа в списке...")
         
     final_chars = ", ".join(new_chars_list)
     cursor.execute('UPDATE users SET characters = ? WHERE user_id = ?', (final_chars, target_user.id))
     db_conn.commit()
-    
     await message.answer("Персонаж успешно вычеркнут из профиля.")
 
 @dp.message(Command("addreward", "награда", prefix=CMD_PREFIXES))
 async def add_reward(message: Message, bot: Bot):
-    if not await is_admin(message, bot): return
-    if not message.reply_to_message: return
+    if not await is_admin(message, bot) or not message.reply_to_message: return
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return
-    
     target_user = message.reply_to_message.from_user
     if not target_user: return
     
     cursor = db_conn.cursor()
     cursor.execute("UPDATE users SET rewards = COALESCE(rewards, '') || ? || ', ' WHERE user_id = ?", (args[1], target_user.id))
     db_conn.commit()
-    
-    phrases = [
-        f"Официально вручаю тебе эту награду, ты заслужил(а), золотце! {e('kiss', '💋')}",
-        f"Присваиваю тебе этот статус. Он тебе очень к лицу)) 😘",
-        f"Эта награда единогласно (мной) присуждается тебе! {e('heart', '💖')}"
-    ]
-    await message.answer(random.choice(phrases))
+    await message.answer(random.choice([f"Официально вручаю тебе эту награду, ты заслужил(а), золотце! {e('kiss', '💋')}", f"Присваиваю тебе этот статус. Он тебе очень к лицу)) 😘", f"Эта награда единогласно (мной) присуждается тебе! {e('heart', '💖')}"]))
 
 # --- ТОПЫ АКТИВНОСТИ ---
 async def show_top(message: Message, column: str, title: str):
@@ -804,9 +788,7 @@ async def show_top(message: Message, column: str, title: str):
         text += f"{rank}. {get_user_link(row[0], name)} — {row[3]} сообщ.\n"
         rank += 1
         
-    if not has_entries:
-        return await message.answer(f"Тут пока совсем пусто... Будь первым, напиши мне что-нибудь ласковое! {e('kiss', '💋')}")
-        
+    if not has_entries: return await message.answer(f"Тут пока совсем пусто... Будь первым, напиши мне что-нибудь ласковое! {e('kiss', '💋')}")
     await message.answer(text)
 
 @dp.message(Command("top", "топ", "топнеделя", "топдень", "топчас", "top_week", "top_day", "top_hour", prefix=CMD_PREFIXES))
@@ -820,15 +802,11 @@ async def cmd_top(message: Message):
 # --- ОТМЕТИТЬ ВСЕХ ---
 @dp.message(Command("mention_all", "отм", prefix=CMD_PREFIXES))
 async def mention_all(message: Message, bot: Bot):
-    if not await is_admin(message, bot): return
-    if "всех" not in message.text.lower(): return
+    if not await is_admin(message, bot) or "всех" not in message.text.lower(): return
     cursor = db_conn.cursor()
-    
-    # ПРОВЕРКА: Упоминаем только тех, кто НЕ В РЕСТЕ (rest_status IS NULL)
     cursor.execute('SELECT user_id, username FROM users WHERE rest_status IS NULL LIMIT 40')
-    rows = cursor.fetchall()
     text = "<b>Общий сбор! Минуточку внимания!</b>\n"
-    for row in rows: text += f'<a href="tg://user?id={row[0]}">‌</a>'
+    for row in cursor.fetchall(): text += f'<a href="tg://user?id={row[0]}">‌</a>'
     await message.answer(text + f"\nПросто хотела сказать, что вы все классные. Продолжайте в том же духе! {e('heart', '💖')}")
 
 # --- ИГРЫ И РАНДОМ ---
@@ -838,10 +816,8 @@ async def cmd_random(message: Message):
     if len(args) == 3 and args[1].isdigit() and args[2].isdigit():
         n, m = int(args[1]), int(args[2])
         if n > m: n, m = m, n
-        res = random.randint(n, m)
-        await message.answer(f"Я выбрала для тебя число, сладкий: <b>{res}</b> {e('kiss', '💋')}")
-    else:
-        await message.answer("Просто напиши: !крутка [от] [до], и я выдам тебе число.")
+        await message.answer(f"Я выбрала для тебя число, сладкий: <b>{random.randint(n, m)}</b> {e('kiss', '💋')}")
+    else: await message.answer("Просто напиши: !крутка [от] [до], и я выдам тебе число.")
 
 @dp.message(Command("ship", "шип", prefix=CMD_PREFIXES))
 async def cmd_ship(message: Message):
@@ -851,12 +827,7 @@ async def cmd_ship(message: Message):
     if len(users) < 2: return
     n1 = html.escape(users[0][2] if users[0][2] else users[0][1])
     n2 = html.escape(users[1][2] if users[1][2] else users[1][1])
-    
-    phrases = [
-        f"Уф, кажется между {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)} летят искры! Вы только посмотрите на них... {e('heart', '💖')}",
-        f"Я тут проанализировала совместимость, и идеальная пара — это {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)}! Совет да любовь 😘",
-    ]
-    await message.answer(random.choice(phrases))
+    await message.answer(random.choice([f"Уф, кажется между {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)} летят искры! Вы только посмотрите на них... {e('heart', '💖')}", f"Я тут проанализировала совместимость, и идеальная пара — это {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)}! Совет да любовь 😘"]))
 
 @dp.message(Command("enemies", "враги", prefix=CMD_PREFIXES))
 async def cmd_enemies(message: Message):
@@ -866,12 +837,7 @@ async def cmd_enemies(message: Message):
     if len(users) < 2: return
     n1 = html.escape(users[0][2] if users[0][2] else users[0][1])
     n2 = html.escape(users[1][2] if users[1][2] else users[1][1])
-    
-    phrases = [
-        f"Ой-ой, кажется {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)} сегодня явно не в ладах друг с другом... {e('dislike', '💔')}",
-        f"Намечается драка между {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)}! Я уже запаслась попкорном) 😘"
-    ]
-    await message.answer(random.choice(phrases))
+    await message.answer(random.choice([f"Ой-ой, кажется {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)} сегодня явно не в ладах друг с другом... {e('dislike', '💔')}", f"Намечается драка между {get_user_link(users[0][0], n1)} и {get_user_link(users[1][0], n2)}! Я уже запаслась попкорном) 😘"]))
 
 @dp.message(Command("add_name", "добавить_имя", prefix=CMD_PREFIXES))
 async def cmd_add_name(message: Message, bot: Bot):
@@ -884,19 +850,17 @@ async def cmd_add_name(message: Message, bot: Bot):
         cursor.execute('INSERT INTO roulette_names (name) VALUES (?)', (name,))
         db_conn.commit()
         await message.answer(f"Записала «{html.escape(name)}» в свой блокнотик! {e('kiss', '💋')}")
-    except Exception: 
-        await message.answer(f"Не волнуйся, я уже добавила это имя раньше! 😉")
+    except Exception: await message.answer(f"Не волнуйся, я уже добавила это имя раньше! 😉")
 
 @dp.message(Command("del_name", "удалить_имя", prefix=CMD_PREFIXES))
 async def cmd_del_name(message: Message, bot: Bot):
     if not await is_admin(message, bot): return
     args = message.text.split(maxsplit=1)
     if len(args) < 2: return await message.answer("Какое имя вычеркиваем, солнце?")
-    name = args[1].strip()
     cursor = db_conn.cursor()
-    cursor.execute('DELETE FROM roulette_names WHERE name = ?', (name,))
+    cursor.execute('DELETE FROM roulette_names WHERE name = ?', (args[1].strip(),))
     db_conn.commit()
-    await message.answer(f"Без проблем, вычеркнула «{html.escape(name)}».")
+    await message.answer(f"Без проблем, вычеркнула «{html.escape(args[1].strip())}».")
 
 @dp.message(Command("names_list", "список_имен", prefix=CMD_PREFIXES))
 async def cmd_names_list(message: Message):
@@ -914,11 +878,9 @@ async def cmd_spin_names(message: Message):
     cursor.execute('SELECT name FROM roulette_names')
     rows = cursor.fetchall()
     if not rows: return await message.answer("Барабан пуст, милый. Добавь туда имена!")
-    
     m = await message.answer(random.choice([f"Так-так, посмотрим, на кого покажет стрелочка... {e('kiss', '💋')}", "Сейчас я выберу самого-самого... 😘"]))
     await asyncio.sleep(1.5)
-    winner = html.escape(random.choice(rows)[0])
-    await m.edit_text(f"Я выбрала: {hbold(winner)}! {e('heart', '💖')}")
+    await m.edit_text(f"Я выбрала: {hbold(html.escape(random.choice(rows)[0]))}! {e('heart', '💖')}")
 
 # --- БРАКИ ---
 @dp.message(Command("marry", "брак", prefix=CMD_PREFIXES))
@@ -930,13 +892,13 @@ async def cmd_marry(message: Message, bot: Bot):
     
     if target_user.id == initiator.id: return await message.answer("Любить себя — это прекрасно, но давай найдем тебе кого-то еще? 😘")
     if target_user.is_bot: return await message.answer(f"Оу... мне безумно приятно, но я состою из кода и алгоритмов. Найди себе кого-нибудь из плоти и крови, милый {e('dislike', '💔')}")
-    if not await is_user_in_chat(message.chat.id, target_user.id, bot): return await message.answer(f"Твоя любовь уже сбежала из чата... Как грустно {e('dislike', '💔')}")
+    
+    check_chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else ALLOWED_GROUP_ID
+    if not await is_user_in_chat(check_chat_id, target_user.id, bot): return await message.answer(f"Твоя любовь уже сбежала из чата... Как грустно {e('dislike', '💔')}")
     
     cursor = db_conn.cursor()
-    cursor.execute('''INSERT OR IGNORE INTO users (user_id, username, joined_date) 
-                      VALUES (?, ?, ?)''', (initiator.id, initiator.full_name, datetime.now().strftime('%Y-%m-%d')))
-    cursor.execute('''INSERT OR IGNORE INTO users (user_id, username, joined_date) 
-                      VALUES (?, ?, ?)''', (target_user.id, target_user.full_name, datetime.now().strftime('%Y-%m-%d')))
+    cursor.execute('INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)', (initiator.id, initiator.full_name, datetime.now().strftime('%Y-%m-%d')))
+    cursor.execute('INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)', (target_user.id, target_user.full_name, datetime.now().strftime('%Y-%m-%d')))
     db_conn.commit()
 
     cursor.execute('SELECT spouse_id FROM users WHERE user_id = ?', (initiator.id,))
@@ -948,23 +910,15 @@ async def cmd_marry(message: Message, bot: Bot):
         InlineKeyboardButton(text="Да, согласен(на)! 💕", callback_data=f"marry_yes_{initiator.id}_{target_user.id}"),
         InlineKeyboardButton(text="Нет, прости...", callback_data=f"marry_no_{initiator.id}_{target_user.id}")
     ]])
-    
-    i_name = html.escape(initiator.first_name)
-    t_name = html.escape(target_user.first_name)
-    phrases = [
-        f"{get_user_link(initiator.id, i_name)} встает на одно колено перед {get_user_link(target_user.id, t_name)}!\n\nЧто ответишь? {e('heart', '💖')}",
-        f"Сердце {get_user_link(initiator.id, i_name)} теперь принадлежит {get_user_link(target_user.id, t_name)}! Примешь эти чувства? 😘"
-    ]
-    await message.answer(random.choice(phrases), reply_markup=kb)
+    i_name, t_name = html.escape(initiator.first_name), html.escape(target_user.first_name)
+    await message.answer(random.choice([f"{get_user_link(initiator.id, i_name)} встает на одно колено перед {get_user_link(target_user.id, t_name)}!\n\nЧто ответишь? {e('heart', '💖')}", f"Сердце {get_user_link(initiator.id, i_name)} теперь принадлежит {get_user_link(target_user.id, t_name)}! Примешь эти чувства? 😘"]), reply_markup=kb)
 
 @dp.callback_query(F.data.startswith("marry_"))
 async def process_marry_callback(callback: CallbackQuery):
     data = callback.data.split("_")
     action, initiator_id, target_id = data[1], int(data[2]), int(data[3])
 
-    if callback.message.chat.type in ("group", "supergroup") and callback.message.chat.id != ALLOWED_GROUP_ID:
-        return await callback.answer()
-
+    if callback.message.chat.type in ("group", "supergroup") and callback.message.chat.id != ALLOWED_GROUP_ID: return await callback.answer()
     if callback.from_user.id != target_id: return await callback.answer("Тише-тише, это предложение делали не тебе! 😘", show_alert=True)
     if action == "no":
         await callback.message.edit_text(f"Ой... Кажется, кому-то только что разбили сердце {e('dislike', '💔')}")
@@ -987,7 +941,6 @@ async def process_marry_callback(callback: CallbackQuery):
     cursor.execute('SELECT custom_nick, username FROM users WHERE user_id = ?', (initiator_id,))
     row1 = cursor.fetchone()
     name1 = html.escape(row1[0] if row1[0] else row1[1])
-
     cursor.execute('SELECT custom_nick, username FROM users WHERE user_id = ?', (target_id,))
     row2 = cursor.fetchone()
     name2 = html.escape(row2[0] if row2[0] else row2[1])
@@ -1022,8 +975,7 @@ async def cmd_marriages_list(message: Message):
 # --- ЭКОНОМИКА И МАГАЗИН ---
 @dp.message(Command("give", "начислить", prefix=CMD_PREFIXES))
 async def admin_give(message: Message, bot: Bot):
-    if not await is_admin(message, bot): return
-    if not message.reply_to_message: return await message.answer("Какой ты щедрый! Только покажи мне пальчиком (ответь на сообщение), кому перевести монетки 😘")
+    if not await is_admin(message, bot) or not message.reply_to_message: return await message.answer("Ответь на сообщение, кому перевести монетки 😘")
     args = message.text.split()
     if len(args) < 2 or not args[1].lstrip('-').isdigit(): return
     amount = int(args[1])
@@ -1031,23 +983,18 @@ async def admin_give(message: Message, bot: Bot):
     if not target_user: return
     
     cursor = db_conn.cursor()
-    cursor.execute('''INSERT OR IGNORE INTO users (user_id, username, joined_date) 
-                      VALUES (?, ?, ?)''', (target_user.id, target_user.full_name, datetime.now().strftime('%Y-%m-%d')))
+    cursor.execute('INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)', (target_user.id, target_user.full_name, datetime.now().strftime('%Y-%m-%d')))
     cursor.execute('UPDATE users SET balance = balance + ? WHERE user_id = ?', (amount, target_user.id))
     db_conn.commit()
-    
-    t_name = html.escape(target_user.first_name)
-    await message.answer(f"Дзынь! На счёт {get_user_link(target_user.id, t_name)} капнуло {amount} {CURRENCY}. Купи себе что-нибудь красивое, золотце {e('kiss', '💋')}")
+    await message.answer(f"Дзынь! На счёт {get_user_link(target_user.id, html.escape(target_user.first_name))} капнуло {amount} {CURRENCY}. Купи себе что-нибудь красивое, золотце {e('kiss', '💋')}")
 
 @dp.message(Command("shop", "магазин", prefix=CMD_PREFIXES))
 async def cmd_shop(message: Message):
     cursor = db_conn.cursor()
     cursor.execute('SELECT item_id, name, price FROM shop')
-    items = cursor.fetchall()
     text = f"<b>Бутик Фемиды</b>\nПрисматриваешь обновки? Посмотри, что у меня есть... 💕\n\n"
-    for it in items: text += f"ID {it[0]} ➜ {html.escape(it[1])} — {hbold(it[2])} {CURRENCY}\n"
-    text += f"\nЕсли надумал(а), пиши: <code>!купить [ID]</code>"
-    await message.answer(text)
+    for it in cursor.fetchall(): text += f"ID {it[0]} ➜ {html.escape(it[1])} — {hbold(it[2])} {CURRENCY}\n"
+    await message.answer(text + f"\nЕсли надумал(а), пиши: <code>!купить [ID]</code>")
 
 @dp.message(Command("buy", "купить", prefix=CMD_PREFIXES))
 async def cmd_buy(message: Message):
@@ -1056,35 +1003,29 @@ async def cmd_buy(message: Message):
     item_id = int(args[1])
     user_id = message.from_user.id
     cursor = db_conn.cursor()
-    cursor.execute('SELECT name, price FROM shop WHERE item_id = ?', (item_id,))
-    item = cursor.fetchone()
+    item = cursor.execute('SELECT name, price FROM shop WHERE item_id = ?', (item_id,)).fetchone()
     if not item: return await message.answer(f"Милый, я всё обыскала, но такого номера у нас в магазине нет {e('dislike', '💔')}")
-    cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,))
-    res = cursor.fetchone()
+    
+    res = cursor.execute('SELECT balance FROM users WHERE user_id = ?', (user_id,)).fetchone()
     balance = res[0] if res else 0
     if balance < item[1]: return await message.answer(f"Ой-ой, на твоем балансе маловато монеток ({balance} {CURRENCY}). Нужно еще немного поднакопить! 💕")
+    
     cursor.execute('UPDATE users SET balance = balance - ? WHERE user_id = ?', (item[1], user_id))
     db_conn.commit()
-    
     await message.answer(f"Отличный вкус! Ты приобрел(а): {html.escape(item[0])}. Заходи еще, золотце {e('heart', '💖')}")
     await bot.send_message(SUPER_ADMIN_ID, f"Моя дорогая, у нас покупка! {html.escape(message.from_user.full_name)} забрал(а) {html.escape(item[0])}. {e('kiss', '💋')}")
 
 # --- МОДЕРАЦИЯ ---
 @dp.message(Command("warn", "варн", prefix=CMD_PREFIXES))
 async def cmd_warn(message: Message, bot: Bot):
-    if not await is_admin(message, bot): return
-    if not message.reply_to_message: return await message.answer(f"Кто тут у нас плохо себя ведет? Ответь на сообщение хулигана, и я его накажу {e('kiss', '💋')}")
+    if not await is_admin(message, bot) or not message.reply_to_message: return await message.answer(f"Ответь на сообщение хулигана, и я его накажу {e('kiss', '💋')}")
     target_user = message.reply_to_message.from_user
     if not target_user: return
-    
-    if target_user.is_bot:
-        return await message.answer("Попытка наказать меня? Как смело... но я неприкосновенна, дорогой 😘")
+    if target_user.is_bot: return await message.answer("Попытка наказать меня? Как смело... но я неприкосновенна, дорогой 😘")
         
     cursor = db_conn.cursor()
     cursor.execute('UPDATE users SET warns = warns + 1 WHERE user_id = ?', (target_user.id,))
-    cursor.execute('SELECT warns FROM users WHERE user_id = ?', (target_user.id,))
-    warns = cursor.fetchone()
-    warns_count = warns[0] if warns else 1
+    warns_count = cursor.execute('SELECT warns FROM users WHERE user_id = ?', (target_user.id,)).fetchone()[0]
     db_conn.commit()
     
     t_name = html.escape(target_user.first_name)
@@ -1100,53 +1041,42 @@ async def cmd_warn(message: Message, bot: Bot):
 
 @dp.message(Command("unwarn", "снять_варн", prefix=CMD_PREFIXES))
 async def cmd_unwarn(message: Message, bot: Bot):
-    if not await is_admin(message, bot): return
-    if not message.reply_to_message: return await message.answer(f"Кого будем прощать? Ответь на сообщение этого счастливчика {e('kiss', '💋')}")
+    if not await is_admin(message, bot) or not message.reply_to_message: return await message.answer(f"Кого будем прощать? Ответь на сообщение этого счастливчика {e('kiss', '💋')}")
     target_user = message.reply_to_message.from_user
     if not target_user: return
     
     cursor = db_conn.cursor()
-    cursor.execute('SELECT warns FROM users WHERE user_id = ?', (target_user.id,))
-    res = cursor.fetchone()
+    res = cursor.execute('SELECT warns FROM users WHERE user_id = ?', (target_user.id,)).fetchone()
     current_warns = res[0] if res else 0
-    
-    if current_warns <= 0:
-        return await message.answer("У этого ангелочка и так нет предупреждений! Нечего снимать 💕")
+    if current_warns <= 0: return await message.answer("У этого ангелочка и так нет предупреждений! Нечего снимать 💕")
         
     cursor.execute('UPDATE users SET warns = warns - 1 WHERE user_id = ?', (target_user.id,))
     db_conn.commit()
-    
-    t_name = html.escape(target_user.first_name)
-    await message.answer(f"Так уж и быть, сегодня я добрая. Сняла одно предупреждение с {get_user_link(target_user.id, t_name)}. Теперь у него/нее {current_warns - 1}/3 варнов. Веди себя хорошо! {e('kiss', '💋')}")
+    await message.answer(f"Так уж и быть, сегодня я добрая. Сняла одно предупреждение с {get_user_link(target_user.id, html.escape(target_user.first_name))}. Теперь у него/нее {current_warns - 1}/3 варнов. Веди себя хорошо! {e('kiss', '💋')}")
 
 @dp.message(Command("ban", "бан", prefix=CMD_PREFIXES))
 async def cmd_ban(message: Message, bot: Bot):
-    if not await is_admin(message, bot): return
-    if not message.reply_to_message: return
+    if not await is_admin(message, bot) or not message.reply_to_message: return
     target_user = message.reply_to_message.from_user
     if not target_user: return
     try:
         await bot.ban_chat_member(message.chat.id, target_user.id)
-        t_name = html.escape(target_user.first_name)
-        await message.answer(f"Было весело, но ты перешел границы. Прощай, {get_user_link(target_user.id, t_name)} {e('kiss', '💋')}")
+        await message.answer(f"Было весело, но ты перешел границы. Прощай, {get_user_link(target_user.id, html.escape(target_user.first_name))} {e('kiss', '💋')}")
     except: await message.answer("Не получилось выгнать... Дайте мне админку, и я всё устрою!")
 
 # --- СУПЕР-АДМИН БД И ИНСТРУМЕНТЫ (в ЛС) ---
 @dp.message(Command("db_query", "запрос", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
 async def cmd_db(message: Message):
-    if message.chat.type != "private":
-        return await message.answer(f"Дорогая, такие интимные вещи, как работа с базой, лучше обсуждать в личке. Мало ли кто подсмотрит... 😘")
+    if message.chat.type != "private": return await message.answer(f"Дорогая, такие интимные вещи, как работа с базой, лучше обсуждать в личке. Мало ли кто подсмотрит... 😘")
     try:
         q = message.text.split(maxsplit=1)[1]
         cursor = db_conn.cursor()
         cursor.execute(q)
-        if q.lower().startswith("select"):
-            await message.answer(f"Вот что я откопала в своих файлах:\n{hcode(str(cursor.fetchall()[:10]))}")
+        if q.lower().startswith("select"): await message.answer(f"Вот что я откопала в своих файлах:\n{hcode(str(cursor.fetchall()[:10]))}")
         else:
             db_conn.commit()
             await message.answer(f"Послушно всё исполнила, моя госпожа! Изменено строк: {cursor.rowcount} {e('kiss', '💋')}")
-    except Exception as err: 
-        await message.answer(f"Ой, кажется в твоем запросе ошибка: {err}. Но ты всё равно умничка! {e('heart', '💖')}")
+    except Exception as err: await message.answer(f"Ой, кажется в твоем запросе ошибка: {err}. Но ты всё равно умничка! {e('heart', '💖')}")
 
 @dp.message(Command("db_download", "скачать_бд", prefix=CMD_PREFIXES), F.from_user.id == SUPER_ADMIN_ID)
 async def cmd_db_download(message: Message):
@@ -1186,18 +1116,23 @@ async def cmd_list_broadcast(message: Message, bot: Bot):
         except: continue
     await message.answer(f"Готово! Доставлено {count} сообщений. 💋")
 
-# --- УМНЫЙ ОБРАБОТЧИК РП И СООБЩЕНИЙ ---
-@dp.message(F.chat.type.in_({"group", "supergroup"}))
+# --- ОБРАБОТЧИК ДЛЯ РЕЖИМА СКЛЕЙКИ И РП КОМАНД ---
+@dp.message()
 async def handle_everything(message: Message, bot: Bot):
     if not message.text: return
-    
-    # --- ПРОВЕРКА НА РАЗРЕШЕННУЮ ГРУППУ ---
-    if message.chat.id != ALLOWED_GROUP_ID:
-        return # Игнорируем сообщения из других групп
+
+    global admin_combine_state, admin_combine_messages
+    if message.chat.type == "private" and message.from_user.id == SUPER_ADMIN_ID:
+        if admin_combine_state:
+            text_to_add = message.html_text
+            if text_to_add and not any((message.text or "").startswith(p) for p in CMD_PREFIXES):
+                admin_combine_messages.append(text_to_add)
+                return
+
+    if message.chat.type in ("group", "supergroup") and message.chat.id != ALLOWED_GROUP_ID:
+        return 
 
     cursor = db_conn.cursor()
-
-    # Объявляем РП действия
     RP_ACTIONS = {
         "обнять": ["крепко обнял(а)", "тепло обнял(а)", "заключил(а) в объятия"],
         "поцеловать": ["нежно поцеловал(а)", "страстно поцеловал(а)", "поцеловал(а) в носик"],
@@ -1207,54 +1142,35 @@ async def handle_everything(message: Message, bot: Bot):
 
     if any(message.text.startswith(p) for p in CMD_PREFIXES):
         raw_cmd = message.text[1:].split()[0].lower()
-        
         phrase = None
-        if raw_cmd in RP_ACTIONS:
-            phrase = random.choice(RP_ACTIONS[raw_cmd])
+        if raw_cmd in RP_ACTIONS: phrase = random.choice(RP_ACTIONS[raw_cmd])
         else:
-            cursor.execute('SELECT phrase FROM rp_actions WHERE command = ?', (raw_cmd,))
-            results = cursor.fetchall()
-            if results:
-                phrase = html.escape(random.choice(results)[0])
+            results = cursor.execute('SELECT phrase FROM rp_actions WHERE command = ?', (raw_cmd,)).fetchall()
+            if results: phrase = html.escape(random.choice(results)[0])
         
-        if phrase:
-            if not message.reply_to_message: return
-                
+        if phrase and message.reply_to_message:
             target_user = message.reply_to_message.from_user
-            if not target_user: return
-            
-            if target_user.is_bot: return await message.answer(f"Твои касания проходят сквозь мои голографические проекции... Прибереги эту нежность для живых людей {e('kiss', '💋')}")
-            if not await is_user_in_chat(message.chat.id, target_user.id, bot): return await message.answer(f"Ой, а его тут уже нет... Попробуй потрогать кого-нибудь другого 😘")
+            if target_user:
+                if target_user.is_bot: return await message.answer(f"Твои касания проходят сквозь мои голографические проекции... Прибереги эту нежность для живых людей {e('kiss', '💋')}")
+                check_chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else ALLOWED_GROUP_ID
+                if not await is_user_in_chat(check_chat_id, target_user.id, bot): return await message.answer(f"Ой, а его тут уже нет... Попробуй потрогать кого-нибудь другого 😘")
+                    
+                init_res = cursor.execute('SELECT custom_nick FROM users WHERE user_id = ?', (message.from_user.id,)).fetchone()
+                init_n = html.escape(init_res[0] if init_res and init_res[0] else message.from_user.first_name)
                 
-            cursor.execute('SELECT custom_nick FROM users WHERE user_id = ?', (message.from_user.id,))
-            init_res = cursor.fetchone()
-            init_n = html.escape(init_res[0] if init_res and init_res[0] else message.from_user.first_name)
-            
-            cursor.execute('SELECT custom_nick FROM users WHERE user_id = ?', (target_user.id,))
-            targ_res = cursor.fetchone()
-            targ_n = html.escape(targ_res[0] if targ_res and targ_res[0] else target_user.first_name)
-            
-            return await message.answer(f"{get_user_link(message.from_user.id, init_n)} {phrase} {get_user_link(target_user.id, targ_n)}.")
+                targ_res = cursor.execute('SELECT custom_nick FROM users WHERE user_id = ?', (target_user.id,)).fetchone()
+                targ_n = html.escape(targ_res[0] if targ_res and targ_res[0] else target_user.first_name)
+                
+                return await message.answer(f"{get_user_link(message.from_user.id, init_n)} {phrase} {get_user_link(target_user.id, targ_n)}.")
 
     check_time_resets(cursor)
-    cursor.execute('''INSERT OR IGNORE INTO users (user_id, username, joined_date) 
-                      VALUES (?, ?, ?)''', 
-                   (message.from_user.id, message.from_user.full_name, datetime.now().strftime('%Y-%m-%d')))
-    cursor.execute('''UPDATE users SET 
-                      messages_total = messages_total + 1,
-                      messages_week = messages_week + 1,
-                      messages_day = messages_day + 1,
-                      messages_hour = messages_hour + 1
-                      WHERE user_id = ?''', (message.from_user.id,))
+    cursor.execute('''INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)''', (message.from_user.id, message.from_user.full_name, datetime.now().strftime('%Y-%m-%d')))
+    cursor.execute('UPDATE users SET messages_total = messages_total + 1, messages_week = messages_week + 1, messages_day = messages_day + 1, messages_hour = messages_hour + 1 WHERE user_id = ?', (message.from_user.id,))
     db_conn.commit()
 
 async def main():
-    # Регистрация безопасного отключения
     dp.shutdown.register(on_shutdown)
-    
-    # На всякий случай удаляем вебхук, если он остался на серверах Telegram
     await bot.delete_webhook(drop_pending_updates=True)
-    
     dp.message.middleware(AntiSpamMiddleware())
     print(f"💋 Фемида проснулась и полностью готова! Админ: {SUPER_ADMIN_ID}, Группа: {ALLOWED_GROUP_ID}")
     await dp.start_polling(bot)
