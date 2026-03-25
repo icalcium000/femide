@@ -44,7 +44,7 @@ load_dotenv()
 # Берем токен из переменных окружения сервера (Environment Variables)
 TOKEN = os.getenv("BOT_TOKEN") or os.getenv("TOKEN")
 
-# Переносим ID в переменные окружения.
+# Переносим ID в переменные окружения. Если они не заданы, используются значения по умолчанию.
 SUPER_ADMIN_ID = int(os.getenv("SUPER_ADMIN_ID") or 1197260250)
 ALLOWED_GROUP_ID = int(os.getenv("ALLOWED_GROUP_ID") or -1000000000000)
 
@@ -53,6 +53,7 @@ CMD_PREFIXES = ("/", "!")
 # Строгая проверка токена перед инициализацией
 if not TOKEN:
     logging.critical("❌ КРИТИЧЕСКАЯ ОШИБКА: Токен бота не обнаружен!")
+    logging.critical("Убедитесь, что на сайте хостинга в разделе 'Environment Variables' создана переменная BOT_TOKEN.")
     sys.exit(1)
 
 # Флаги для склейки сообщений в ЛС от супер-админа
@@ -77,8 +78,7 @@ def Command(*args, **kwargs):
     kwargs.setdefault('ignore_case', True)
     return AiogramCommand(*args, **kwargs)
 
-# Настройка логирования для отслеживания ошибок отправки
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO)
 
 # --- БАЗА ДАННЫХ (SQLITE В ПАПКЕ DATA) ---
 DEFAULT_DATA_DIR = "/app/data" if sys.platform.startswith('linux') else "data"
@@ -176,41 +176,32 @@ async def on_shutdown(bot: Bot):
 # --- ФОНОВАЯ ЗАДАЧА: ПРОВЕРКА СТАТУСА (РАЗ В ЧАС) ---
 async def status_report_task(bot_instance: Bot):
     """Каждый час отправляет 'Работаю' супер-админу в личку."""
-    # Даем боту 5 секунд на полную инициализацию сети
     await asyncio.sleep(5)
-    
-    logging.info(f"Запуск фоновой задачи отчета для админа {SUPER_ADMIN_ID}")
-    
     try:
         await bot_instance.send_message(
             SUPER_ADMIN_ID, 
             f"<b>Система запущена!</b> Начинаю ежечасные отчеты для тебя, радость моя {e('heart', '💖')}\n"
             f"<i>Если ты видишь это сообщение, значит связь налажена.</i>"
         )
-        logging.info("Приветственное сообщение фоновой задачи успешно отправлено.")
     except Exception as e:
         logging.error(f"❌ ОШИБКА: Не удалось отправить сообщение Супер-Админу (ID: {SUPER_ADMIN_ID}). "
                      f"Возможно, админ не написал боту первым (/start) или ID неверный. Ошибка: {e}")
 
     while True:
-        # Ждем 1 час (3600 секунд)
         await asyncio.sleep(3600)
-        
         try:
             await bot_instance.send_message(
                 SUPER_ADMIN_ID, 
                 f"<b>Отчет системы:</b> Работаю в штатном режиме, Создатель! {e('kiss', '💋')}"
             )
-            logging.info("Ежечасный отчет успешно доставлен.")
         except Exception as err:
             logging.error(f"❌ ОШИБКА в цикле отчета: {err}")
-            # Если ошибка (например, временный сбой сети), подождем чуть дольше перед следующей попыткой
             await asyncio.sleep(60)
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async def is_admin(message: Message, bot: Bot):
     if message.from_user.id == SUPER_ADMIN_ID: return True
-    if message.chat.type == "private": return True
+    if message.chat.type == "private": return False # ИСПРАВЛЕНО: Обычные юзеры в ЛС не админы
     try:
         member = await bot.get_chat_member(message.chat.id, message.from_user.id)
         return member.status in ("administrator", "creator")
@@ -366,7 +357,7 @@ async def cmd_help(message: Message):
         f"<b>Твой профиль:</b> <code>!профиль</code>, <code>!ник</code> [текст], <code>!описание</code> [текст], <code>!рест</code> [причина], <code>!анрест</code>, <code>!люблю</code> [текст], <code>!нелюблю</code> [текст], <code>!добавить_перса</code> [имя] | [ссылка], <code>!удалить_перса</code> [имя/все]\n"
         f"<b>Твоя внешность:</b> <code>!уст_фото</code>, <code>!удалить_фото</code>\n"
         f"<b>Кошелек:</b> <code>!магазин</code>, <code>!купить</code> [id]\n"
-        f"<b>Дела сердечные:</b> <code>!брак</code>, <code>!развод</code>, <code>!шип</code>, <code>!враги</code>\n"
+        f"<b>Дела сердечные:</b> <code>!брак</code>, <code>!развод</code>, <code>!список_браков</code>, <code>!шип</code>, <code>!враги</code>\n"
         f"<b>Прикосновения:</b> Любая РП команда через ! (например <code>!обнять</code>, <code>!поцеловать</code>)\n"
         f"<b>Игры:</b> <code>!крутка</code> [от] [до], <code>!крутить</code> (рулетка имен), <code>!список_имен</code>\n"
         f"<b>Важное:</b> <code>!правила</code>, <code>!ссылки</code>, <code>!местность</code>\n"
@@ -430,16 +421,7 @@ async def set_loc(message: Message, bot: Bot): await set_setting(message, "locat
 @dp.message(Command("setrules", "уст_правила", prefix=CMD_PREFIXES))
 async def set_rules(message: Message, bot: Bot): await set_setting(message, "rules", bot)
 @dp.message(Command("setlinks", "уст_ссылки", prefix=CMD_PREFIXES))
-async def set_links(message: Message, bot: Bot): await set_links_setting(message, "links", bot)
-
-async def set_links_setting(message: Message, key: str, bot: Bot):
-    if not await is_admin(message, bot): return
-    args = message.text.split(maxsplit=1)
-    if len(args) < 2: return await message.answer(f"А ссылки-то где? {e('kiss', '💋')}")
-    cursor = db_conn.cursor()
-    cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, args[1]))
-    db_conn.commit()
-    await message.answer(f"Ссылки сохранены! {e('kiss', '💋')}")
+async def set_links(message: Message, bot: Bot): await set_setting(message, "links", bot)
 
 # --- ГЛОБАЛЬНЫЕ РАССЫЛКИ (УТРО И НОЧЬ И СООБЩЕНИЯ ОТ БОТА) ---
 @dp.message(Command("setmain", "уст_основной_чат", prefix=CMD_PREFIXES))
@@ -536,7 +518,7 @@ async def cmd_poll(message: Message, bot: Bot):
     if len(args) < 2: return await message.answer("Нужен текст, милый!\nФормат: <code>!голос</code> Ваш вопрос?: Ответ 1, Ответ 2")
         
     text = args[1]
-    if ":" not in text: return await message.answer("Ты забыл dвоеточие `:`. Оно нужно, чтобы отделить вопрос от ответов, золотце.")
+    if ":" not in text: return await message.answer("Ты забыл двоеточие `:`. Оно нужно, чтобы отделить вопрос от ответов, золотце.")
         
     question, answers_str = text.split(":", 1)
     options = [opt.strip() for opt in answers_str.split(",") if opt.strip()]
@@ -599,7 +581,7 @@ async def show_profile(message: Message, bot: Bot):
     
     if message.reply_to_message and target_user.id != message.from_user.id:
         check_chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else ALLOWED_GROUP_ID
-        if not await is_user_in_chat(check_chat_id, target_user.id, bot):
+        if message.chat.type != "private" and not await is_user_in_chat(check_chat_id, target_user.id, bot):
             return await message.answer(f"Этого человека сейчас нет с нами в чате, попробуй позже( {e('dislike', '💔')}")
             
     cursor = db_conn.cursor()
@@ -937,7 +919,8 @@ async def cmd_marry(message: Message, bot: Bot):
     if target_user.is_bot: return await message.answer(f"Оу... мне безумно приятно, но я состою из кода и алгоритмов. Найди себе кого-нибудь из плоти и крови, милый {e('dislike', '💔')}")
     
     check_chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else ALLOWED_GROUP_ID
-    if not await is_user_in_chat(check_chat_id, target_user.id, bot): return await message.answer(f"Твоя любовь уже сбежала из чата... Как грустно {e('dislike', '💔')}")
+    if message.chat.type != "private" and not await is_user_in_chat(check_chat_id, target_user.id, bot): 
+        return await message.answer(f"Твоя любовь уже сбежала из чата... Как грустно {e('dislike', '💔')}")
     
     cursor = db_conn.cursor()
     cursor.execute('INSERT OR IGNORE INTO users (user_id, username, joined_date) VALUES (?, ?, ?)', (initiator.id, initiator.full_name, datetime.now().strftime('%Y-%m-%d')))
@@ -1191,12 +1174,23 @@ async def handle_everything(message: Message, bot: Bot):
             results = cursor.execute('SELECT phrase FROM rp_actions WHERE command = ?', (raw_cmd,)).fetchall()
             if results: phrase = html.escape(random.choice(results)[0])
         
-        if phrase and message.reply_to_message:
-            target_user = message.reply_to_message.from_user
+        if phrase:
+            target_user = message.reply_to_message.from_user if message.reply_to_message else None
+            
+            # В ЛС если нет реплая, перенаправляем действие на самого бота
+            if not target_user and message.chat.type == "private":
+                target_user = await bot.get_me()
+
             if target_user:
-                if target_user.is_bot: return await message.answer(f"Твои касания проходят сквозь мои голографические проекции... Прибереги эту нежность для живых людей {e('kiss', '💋')}")
+                # Если цель бот, и это не ЛС с самим ботом
+                if target_user.is_bot and target_user.id != bot.id: 
+                    return await message.answer(f"Твои касания проходят сквозь мои голографические проекции... Прибереги эту нежность для живых людей {e('kiss', '💋')}")
+                if target_user.is_bot and target_user.id == bot.id and message.chat.type != "private":
+                    return await message.answer(f"Твои касания проходят сквозь мои голографические проекции... Прибереги эту нежность для живых людей {e('kiss', '💋')}")
+                
                 check_chat_id = message.chat.id if message.chat.type in ("group", "supergroup") else ALLOWED_GROUP_ID
-                if not await is_user_in_chat(check_chat_id, target_user.id, bot): return await message.answer(f"Ой, а его тут уже нет... Попробуй потрогать кого-нибудь другого 😘")
+                if message.chat.type != "private" and not await is_user_in_chat(check_chat_id, target_user.id, bot): 
+                    return await message.answer(f"Ой, а его тут уже нет... Попробуй потрогать кого-нибудь другого 😘")
                     
                 init_res = cursor.execute('SELECT custom_nick FROM users WHERE user_id = ?', (message.from_user.id,)).fetchone()
                 init_n = html.escape(init_res[0] if init_res and init_res[0] else message.from_user.first_name)
@@ -1217,7 +1211,6 @@ async def main():
     dp.message.middleware(AntiSpamMiddleware())
     
     # --- ЗАПУСК ФОНОВОЙ ЗАДАЧИ ОТЧЕТА ---
-    # Важно передать текущий экземпляр бота
     asyncio.create_task(status_report_task(bot))
     
     print(f"💋 Фемида проснулась и полностью готова! Админ: {SUPER_ADMIN_ID}, Группа: {ALLOWED_GROUP_ID}")
