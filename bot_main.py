@@ -175,9 +175,19 @@ async def on_shutdown(bot: Bot):
 # --- ФОНОВАЯ ЗАДАЧА: ПРОВЕРКА СТАТУСА (РАЗ В ЧАС) ---
 async def status_report_task(bot: Bot):
     """Каждый час отправляет 'Работаю' супер-админу в личку."""
+    # Ждем 10 секунд после старта, чтобы отправить ПЕРВОЕ подтверждение
+    await asyncio.sleep(10)
+    try:
+        await bot.send_message(
+            SUPER_ADMIN_ID, 
+            f"<b>Проверка связи:</b> Фоновая задача запущена успешно! {e('heart', '💖')}"
+        )
+    except Exception as e:
+        logging.error(f"Не удалось отправить стартовый отчет админу: {e}")
+
     while True:
         try:
-            # Ждем 1 час
+            # Ждем 1 час (3600 секунд)
             await asyncio.sleep(3600)
             
             # Отправляем весточку Создателю
@@ -188,7 +198,8 @@ async def status_report_task(bot: Bot):
             logging.info("Ежечасный отчет отправлен супер-админу.")
         except Exception as err:
             logging.error(f"Ошибка в фоновой задаче статуса: {err}")
-            await asyncio.sleep(60) # При ошибке ждем минуту и пробуем снова
+            # Если ошибка (например, нет интернета), ждем 5 минут и пробуем снова
+            await asyncio.sleep(300) 
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async def is_admin(message: Message, bot: Bot):
@@ -510,7 +521,7 @@ async def cmd_poll(message: Message, bot: Bot):
     if len(args) < 2: return await message.answer("Нужен текст, милый!\nФормат: <code>!голос</code> Ваш вопрос?: Ответ 1, Ответ 2")
         
     text = args[1]
-    if ":" not in text: return await message.answer("Ты забыл двоеточие `:`. Оно нужно, чтобы отделить вопрос от ответов, золотце.")
+    if ":" not in text: return await message.answer("Ты забыл dвоеточие `:`. Оно нужно, чтобы отделить вопрос от ответов, золотце.")
         
     question, answers_str = text.split(":", 1)
     options = [opt.strip() for opt in answers_str.split(",") if opt.strip()]
