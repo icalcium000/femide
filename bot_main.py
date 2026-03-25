@@ -77,7 +77,8 @@ def Command(*args, **kwargs):
     kwargs.setdefault('ignore_case', True)
     return AiogramCommand(*args, **kwargs)
 
-logging.basicConfig(level=logging.INFO)
+# Настройка логирования для отслеживания ошибок отправки
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # --- БАЗА ДАННЫХ (SQLITE В ПАПКЕ DATA) ---
 DEFAULT_DATA_DIR = "/app/data" if sys.platform.startswith('linux') else "data"
@@ -173,33 +174,38 @@ async def on_shutdown(bot: Bot):
     await bot.session.close()
 
 # --- ФОНОВАЯ ЗАДАЧА: ПРОВЕРКА СТАТУСА (РАЗ В ЧАС) ---
-async def status_report_task(bot: Bot):
+async def status_report_task(bot_instance: Bot):
     """Каждый час отправляет 'Работаю' супер-админу в личку."""
-    # Ждем 10 секунд после старта, чтобы отправить ПЕРВОЕ подтверждение
-    await asyncio.sleep(10)
+    # Даем боту 5 секунд на полную инициализацию сети
+    await asyncio.sleep(5)
+    
+    logging.info(f"Запуск фоновой задачи отчета для админа {SUPER_ADMIN_ID}")
+    
     try:
-        await bot.send_message(
+        await bot_instance.send_message(
             SUPER_ADMIN_ID, 
-            f"<b>Проверка связи:</b> Фоновая задача запущена успешно! {e('heart', '💖')}"
+            f"<b>Система запущена!</b> Начинаю ежечасные отчеты для тебя, радость моя {e('heart', '💖')}\n"
+            f"<i>Если ты видишь это сообщение, значит связь налажена.</i>"
         )
+        logging.info("Приветственное сообщение фоновой задачи успешно отправлено.")
     except Exception as e:
-        logging.error(f"Не удалось отправить стартовый отчет админу: {e}")
+        logging.error(f"❌ ОШИБКА: Не удалось отправить сообщение Супер-Админу (ID: {SUPER_ADMIN_ID}). "
+                     f"Возможно, админ не написал боту первым (/start) или ID неверный. Ошибка: {e}")
 
     while True:
+        # Ждем 1 час (3600 секунд)
+        await asyncio.sleep(3600)
+        
         try:
-            # Ждем 1 час (3600 секунд)
-            await asyncio.sleep(3600)
-            
-            # Отправляем весточку Создателю
-            await bot.send_message(
+            await bot_instance.send_message(
                 SUPER_ADMIN_ID, 
                 f"<b>Отчет системы:</b> Работаю в штатном режиме, Создатель! {e('kiss', '💋')}"
             )
-            logging.info("Ежечасный отчет отправлен супер-админу.")
+            logging.info("Ежечасный отчет успешно доставлен.")
         except Exception as err:
-            logging.error(f"Ошибка в фоновой задаче статуса: {err}")
-            # Если ошибка (например, нет интернета), ждем 5 минут и пробуем снова
-            await asyncio.sleep(300) 
+            logging.error(f"❌ ОШИБКА в цикле отчета: {err}")
+            # Если ошибка (например, временный сбой сети), подождем чуть дольше перед следующей попыткой
+            await asyncio.sleep(60)
 
 # --- ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
 async def is_admin(message: Message, bot: Bot):
@@ -424,7 +430,16 @@ async def set_loc(message: Message, bot: Bot): await set_setting(message, "locat
 @dp.message(Command("setrules", "уст_правила", prefix=CMD_PREFIXES))
 async def set_rules(message: Message, bot: Bot): await set_setting(message, "rules", bot)
 @dp.message(Command("setlinks", "уст_ссылки", prefix=CMD_PREFIXES))
-async def set_links(message: Message, bot: Bot): await set_setting(message, "links", bot)
+async def set_links(message: Message, bot: Bot): await set_links_setting(message, "links", bot)
+
+async def set_links_setting(message: Message, key: str, bot: Bot):
+    if not await is_admin(message, bot): return
+    args = message.text.split(maxsplit=1)
+    if len(args) < 2: return await message.answer(f"А ссылки-то где? {e('kiss', '💋')}")
+    cursor = db_conn.cursor()
+    cursor.execute('INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)', (key, args[1]))
+    db_conn.commit()
+    await message.answer(f"Ссылки сохранены! {e('kiss', '💋')}")
 
 # --- ГЛОБАЛЬНЫЕ РАССЫЛКИ (УТРО И НОЧЬ И СООБЩЕНИЯ ОТ БОТА) ---
 @dp.message(Command("setmain", "уст_основной_чат", prefix=CMD_PREFIXES))
@@ -1202,6 +1217,7 @@ async def main():
     dp.message.middleware(AntiSpamMiddleware())
     
     # --- ЗАПУСК ФОНОВОЙ ЗАДАЧИ ОТЧЕТА ---
+    # Важно передать текущий экземпляр бота
     asyncio.create_task(status_report_task(bot))
     
     print(f"💋 Фемида проснулась и полностью готова! Админ: {SUPER_ADMIN_ID}, Группа: {ALLOWED_GROUP_ID}")
