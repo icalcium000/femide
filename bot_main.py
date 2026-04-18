@@ -1,20 +1,21 @@
 import sys
 import subprocess
 
-# --- АВТОМАТИЧЕСКАЯ УСТАНОВКА БИБЛИОТЕК ---
+# --- АВТОМАТИЧЕСКАЯ УСТАНОВКА И ПРОВЕРКА ВЕРСИИ БИБЛИОТЕК ---
+def install_deps():
+    print("Обновляю библиотеки до актуальных версий, подожди секундочку 💋...")
+    subprocess.check_call([sys.executable, "-m", "pip", "install", "aiogram>=3.4.0", "python-dotenv", "--upgrade"])
+
 try:
     import aiogram
+    # Проверяем версию: если стоит старая (2.x), принудительно обновляем
+    if int(getattr(aiogram, '__version__', '2.0.0').split('.')[0]) < 3:
+        install_deps()
     from dotenv import load_dotenv
 except ImportError:
-    print("Ой, кажется у тебя не хватает библиотек! Сейчас всё скачаю, подожди секундочку 💋...")
-    try:
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "aiogram", "python-dotenv"])
-        print("Всё скачалось! Теперь я готова к работе 💖")
-        import aiogram
-        from dotenv import load_dotenv
-    except Exception as e:
-        print(f"Блин, не получилось скачать автоматически 💔. Пожалуйста, напиши в терминале: pip install aiogram python-dotenv\nОшибка: {e}")
-        sys.exit(1)
+    install_deps()
+    import aiogram
+    from dotenv import load_dotenv
 
 import asyncio
 import sqlite3
